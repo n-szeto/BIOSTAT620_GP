@@ -1,0 +1,299 @@
+---
+title: "Project1_Analysis"
+author: "Jeffrey Waters & Nathan Szeto"
+date: "2024-02-16"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)    # Data wrangling
+library(ggplot2)      # Plotting
+library(gtsummary)    # Table 1
+library(patchwork)    # For putting figures side by side
+library(readxl)       # Read excel files
+library(lubridate)    # Working with time series formats
+library(MASS)         # Jack knife Residuals
+library(car)          # linear regression diagonostics
+
+select <- dplyr::select
+```
+
+# Import Data
+```{r}
+
+# Load individual Data
+df1 <- read_excel("Jeffs_data.xlsx")
+df2 <- read_excel("nathan_data.xlsx")
+
+process_data <- function(df, group){
+  
+  # Clean Up date column
+  df$Date <- as.POSIXct(df$Date, format="%m/%d/%y")
+  # Clean up Time column
+  df$Pickup.1st <- as.POSIXct(df$Pickup.1st, format="%T %p")
+  
+  # Add Subject column
+  df$groups <- rep(c(group), times=nrow(df))
+  
+  # Catgorize Time
+  df$isWeekday <- ifelse(weekdays(df$Date) %in% c("Saturday", "Sunday"), "Weekend", "Weekday")
+  df$afterHoliday <- ifelse(df$Date >= as.POSIXct("2024-01-10", tz="UTC"), "AfterHoliday", "BeforeHoliday")
+  df$isHalfway <- rep(c("Before", "After"), each=nrow(df)/2)
+  
+  return(df)
+# Process data, generate AfterHolding, isWeekday, isHalfway variables
+}
+
+df1 <- process_data(df1, "group 1")
+df2 <- process_data(df2, "group 2")
+
+# Merge data by rows
+data <- rbind(df1, df2)
+
+```
+
+
+# Generate acf plots and lags
+```{r}
+
+avg_social_min_per_day <- data %>% select(Date, Social.ST.min) %>% 
+  group_by(Date) %>% 
+  summarize(avg_social_per_day = mean(Social.ST.min))
+
+# No autocorrelation
+
+## SAVE ACF PLOTS
+#pdf("plots/acf_plot.pdf")
+#print(acf(avg_social_min_per_day %>% select(avg_social_per_day), main="Average Social Media Per Day(Mins)"))
+#dev.off()
+```
+# Time series plot of Average Social Media Screen time
+```{r, fig.width=7.5, fig.height=2}
+
+# Overview of Social Media Screen Time
+p <- ggplot() + 
+  geom_line(data=avg_social_min_per_day, aes(x=Date, y=avg_social_per_day, color="group average", linetype="group average"), linewidth=0.7) + 
+  geom_line(data=data, aes(x=Date, y=Social.ST.min, color=groups, linetype=groups), alpha=0.7, linewidth=0.7) + 
+  labs(title="Average Social Media Screen Time Per Day", x="Date", y="Minutes") + 
+  scale_x_datetime(date_breaks = "1 day", date_labels = "%a-%m/%d") +
+  scale_linetype_manual(name="Groups:", values=c("group average" = "dashed", "group 1" = "solid", "group 2" = "solid")) +
+  scale_color_manual(name = "Groups:", values = c("group 1" = "steelblue", "group 2" = "firebrick", "group average" = "black")) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size=6),
+    plot.title=element_text(size=10, hjust=0.5),
+    axis.title.x=element_text(size=9),
+    axis.title.y=element_text(size=9),
+    legend.text=element_text(size=5),
+    legend.title=element_text(size=6),
+    legend.key.size = unit(0.5, "cm"))
+p
+
+# Save Plot
+#ggsave("plots/Social_Media_Time_Series_Plot.png", plot = p, width = 7.5, height = 2, dpi = 300)
+```
+
+
+# Histogram of Social Media Screen Time, stratified by group
+```{r}
+
+p <- ggplot(data=data, aes_string(x="Social.ST.min", fill="groups")) + 
+  geom_histogram(color="black", binwidth=5) + 
+  labs(title="Social Media Screen Time", x="Social Media Screen Time", y="Minutes") + 
+  scale_fill_manual(values = c("group 1" = "steelblue", "group 2" = "firebrick")) +
+  theme(
+    plot.title=element_text(size=15, hjust=0.5),
+    axis.title.x=element_text(size=9),
+    axis.title.y=element_text(size=9))
+
+p
+# Save Plot
+#ggsave("plots/Social_Media_Screen_time_Histogram.png", plot = p, dpi = 300)
+  
+```
+
+# Summary Bar plots of Total Social Media Screen time by IsWeekday, afterHoliday, and isHalfway(stratified by group)
+```{r, fig.width=7, fig.height=3}
+
+
+# Bar Plot of isWeekday
+p1 <- ggplot(data=data, aes_string(x="isWeekday", y="Social.ST.min", fill="groups")) + 
+  geom_bar(stat = "summary", fun = function(x) sum(x) / 60, position="stack", color="black") + 
+  scale_fill_manual(values = c("group 1" = "steelblue", "group 2" = "firebrick")) +
+  labs(title="Weekday/Weekend", x="", y="Total Social Media Use (hours)") + 
+  coord_cartesian(ylim=c(0, 20), xlim=c(1, 2)) +
+  scale_y_continuous(labels = function(x) sprintf("%.f", x), breaks = seq(0, 30, by = 2)) +
+  theme(legend.position = "none") + 
+  theme(
+    plot.title = element_text(hjust=0.5, size=10),
+    axis.text = element_text(size = 7),
+    axis.title.y = element_text(size = 7),
+    axis.title.x = element_text(size = 7),
+  )
+
+# Bar Plot of afterHoliday
+p2 <- ggplot(data=data, aes_string(x="afterHoliday", y="Social.ST.min", fill="groups")) + 
+  geom_bar(stat = "summary", fun = function(x) sum(x) / 60, position="stack", color="black") + 
+  scale_fill_manual(values = c("group 1" = "steelblue", "group 2" = "firebrick")) +
+  labs(title="Holday Season", x="", y="Total Social Media Use (hours)") + 
+  coord_cartesian(ylim=c(0, 20), xlim=c(1, 2)) +
+  scale_y_continuous(labels = function(x) sprintf("%.f", x), breaks = seq(0, 30, by = 2)) +
+  theme(legend.position = "none") + 
+  theme(
+    plot.title = element_text(hjust=0.5, size=10),
+    axis.text = element_text(size = 7),
+    axis.title.y = element_text(size = 7),
+    axis.title.x = element_text(size = 7),
+  )
+
+# Bar Plot of isHalfway
+p3 <- ggplot(data=data, aes_string(x="isHalfway", y="Social.ST.min", fill="groups")) + 
+  geom_bar(stat = "summary", fun = function(x) sum(x) / 60, position="stack", color="black") + 
+  scale_fill_manual(values = c("group 1" = "steelblue", "group 2" = "firebrick")) +
+  labs(title="Halfway Period", x="", y="Total Social Media Use (hours)") + 
+  coord_cartesian(ylim=c(0, 20), xlim=c(1, 2)) +
+  scale_y_continuous(labels = function(x) sprintf("%.f", x), breaks = seq(0, 30,, by = 2)) +
+  theme(
+    plot.title = element_text(hjust=0.5, size=10),
+    axis.text = element_text(size = 7),
+    axis.title.y = element_text(size = 7),
+    axis.title.x = element_text(size = 7),
+    legend.text = element_text(size=6),
+    legend.title = element_text(size=6),
+    legend.key.size = unit(1.5,  "lines")
+  )
+
+# Merge Plots into single plot
+combined_plot <- p1 + p2 + p3
+
+combined_plot <- combined_plot + plot_annotation(title = "Total Social Media Screen Time By:", theme = theme(plot.title = element_text(hjust = 0.5, size = 10)))
+
+combined_plot
+# Save plot
+#ggsave("plots/Total_Social_Media_Screen_Time_By_bar_plots.png", plot = combined_plot, width=7, height=3, dpi = 300)
+```
+
+# GET DATA FOR TABLE 1
+
+
+# Summary Statistics for Time Series Covariates:
+```{r}
+
+print(format(mean(data$Pickup.1st, na.rm=TRUE), "%T %p"))
+print(sd(hour(data$Pickup.1st) + minute(data$Pickup.1st) / 60 + second(data$Pickup.1st) / 3600, na.rm=TRUE) %>% round(2))
+
+
+
+data %>% select(Total.ST.min, Social.ST.min, Pickups) %>% 
+  summarize(
+    mean_Total.ST.min = mean(Total.ST.min, na.rm=TRUE) %>% round(2),
+    sd_Total.ST.min = sd(Total.ST.min, na.rm=TRUE) %>% round(2),
+    mean_Social.ST.min = mean(Social.ST.min, na.rm=TRUE) %>% round(2),
+    sd_Social.ST.min = sd(Social.ST.min, na.rm=TRUE) %>% round(2),
+    mean_Pickups = mean(Pickups, na.rm=TRUE) %>% round(2),
+    sd_Pickups = sd(Pickups, na.rm=TRUE) %>% round(2),
+  )
+
+```
+
+
+# Summary Statistics for Baseline Covariates
+```{r}
+
+base_line <- data %>% 
+  select(-Date, -Total.ST, -Total.ST.min, -Social.ST, -Social.ST.min, -Pickups, -Pickup.1st)
+  
+  
+base_line %>% apply(MARGIN=2, max)
+base_line %>% apply(MARGIN=2, min)
+```
+
+
+# ORACLE LEARNING(LINEAR REGRESSION)
+
+# Oracle linear regression first model(with outlier, not log transformed)
+```{r}
+data_lr_t <- data
+
+model <- lm("Social.ST.min ~ isWeekday + afterHoliday + isHalfway + groups", data=data_lr_t)
+
+# Jack Knife Residuals
+jk_resid <- studres(model)
+
+car::qqPlot(jk_resid)
+car::avPlots(model)
+car::residualPlots(model, type="response")
+
+# Functions for Saving Diagnostic Figures
+#pdf("plots/round1_diag.pdf")                    
+
+## Normality Diagnostics
+#print(car::qqPlot(jk_resid))
+
+## Linearity/Equal Variance Diagnostics
+
+#print(car::avPlots(model))
+#print(car::residualPlots(model, type="response"))
+#dev.off()
+
+
+summary(model)
+
+confint(model)                           
+```
+
+
+# Oracle linear regression second model(without outlier, not log transformed)
+```{r}
+model <- lm("Social.ST.min ~ isWeekday + afterHoliday + isHalfway + groups", data=data_lr_t[-51, ])
+
+# Jack Knife Residuals
+jk_resid <- studres(model)
+
+# Functions for Saving Diagnostic Figures
+#pdf("plots/round2_51_removed_diag.pdf")
+
+## Normality Diagnostics
+#print(car::qqPlot(jk_resid))
+
+## Linearity/Equal Variance Diagnostics
+
+#print(car::avPlots(model))
+#print(car::residualPlots(model, type="response"))
+#dev.off()
+
+summary(model)
+
+confint(model)  
+```
+
+
+# Oracle linear regression second model(without outlier, log transformed)
+```{r}
+data_t3 <- data_lr_t[-51, ]
+#data_t3 <- data_lr_t
+data_t3$Social.ST.min <- log(data_t3$Social.ST.min + 1) # Added + 1 to offset cases that = 0
+
+model <- lm("Social.ST.min ~ isWeekday + afterHoliday + isHalfway + groups", data=data_t3)
+
+# Jack Knife Residuals
+jk_resid <- studres(model)
+
+## Functions for Saving Diagnostic Figures
+#pdf("plots/round3_51_removed_and_log_transformed_diag.pdf")
+
+## Normality Diagnostics
+#print(car::qqPlot(jk_resid))
+
+## Linearity/Equal Variance Diagnostics
+
+#print(car::avPlots(model))
+#print(car::residualPlots(model, type="response"))
+#dev.off()
+
+
+
+summary(model)
+
+confint(model)  
+```
+
