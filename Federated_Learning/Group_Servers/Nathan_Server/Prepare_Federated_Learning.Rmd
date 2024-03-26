@@ -1,0 +1,31 @@
+---
+title: "Prepare_Federated_Data"
+author: "Nathan Szeto"
+date: "2024-02-23"
+output: pdf_document
+---
+```{r}
+library(dplyr)
+```
+
+```{r}
+
+data <- read.csv("Nathan_data_fed.csv")
+
+# Prepare Summary Statistics From Data
+
+n <- nrow(data)
+Y <- data %>% select(Social.ST.min) %>% as.matrix()
+
+X <- data %>% select(-Social.ST.min) %>% as.matrix()
+X <- cbind(rep(c(1), times=n), X)
+
+colnames(X) <- c("(intercept)", colnames(X)[-1])
+
+# Compiles Statistics into list
+l2 <- list(SSX=t(X) %*% X, SSXY=t(X) %*% Y, SSY=t(Y) %*% Y, y_bar=mean(Y), n=n)
+
+# Save Statistics as RData file and send to Central Server
+save(l2, file="../../Central_Server/Nathan.RData")
+
+```
